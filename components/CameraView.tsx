@@ -290,7 +290,79 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture, initialGlassesStyle 
       y: (l.y * vH - sy) / sH
     }));
 
-    if (segmentationStatus === 'ACTIVE') {
+    // LIVE VIEW: Solo mostrar video + gafas AR (sin segmentación para mejor rendimiento)
+    ctx.clearRect(0, 0, canvasW, canvasH);
+    ctx.drawImage(video, sx, sy, sW, sH, 0, 0, canvasW, canvasH);
+
+    if (landmarks && selectedStyle) {
+      drawGlasses(ctx, landmarks, canvasW, canvasH, selectedStyle);
+    }
+    
+    requestRef.current = requestAnimationFrame(process);
+  }, [loadingStage, error, selectedStyle]);
+
+  useEffect(() => {
+    initModels();
+    return () => {
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      if (faceLandmarkerRef.current) faceLandmarkerRef.current.close();
+      if (segmenterRef.current) segmenterRef.current.close();
+      if (hairSegmenterRef.current) hairSegmenterRef.current.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (loadingStage === 'READY') requestRef.current = requestAnimationFrame(process);
+    return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
+  }, [loadingStage, process]);
+
+  // Función para capturar con segmentación aplicada
+  const captureWithSegmentation = async (): Promise<string> => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.videoWidth === 0) {
+      return canvas.toDataURL('image/png');
+    }
+
+    // Calcular crop 9:16
+    const targetRatio = 9 / 16;
+    const vW = video.videoWidth;
+    const vH = video.videoHeight;
+    const videoRatio = vW / vH;
+
+    let sx: number, sy: number, sW: number, sH: number;
+    if (videoRatio > targetRatio) {
+      sW = vH * targetRatio;
+      sH = vH;
+      sx = (vW - sW) / 2;
+      sy = 0;
+    } else {
+      sW = vW;
+      sH = vW / targetRatio;
+      sx = 0;
+      sy = (vH - sH) / 2;
+    }
+
+    const canvasW = 1080;
+    const canvasH = 1920;
+
+    // Obtener landmarks actuales
+    const ts = performance.now();
+    const faceRes = faceLandmarkerRef.current?.detectForVideo(video, ts);
+    const rawLandmarks = faceRes?.faceLandmarks?.[0];
+    const landmarks = rawLandmarks?.map(l => ({
+      x: (l.x * vW - sx) / sW,
+      y: (l.y * vH - sy) / sH
+    }));
+
+    // Crear canvas de salida
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = canvasW;
+    outCanvas.height = canvasH;
+    const outCtx = outCanvas.getContext('2d')!;
+
+    // Si la segmentación está activa, aplicarla
+    if (segmentationStatus === 'ACTIVE' && (segmenterRef.current || hairSegmenterRef.current)) {
       const mCtx = maskCanvasRef.current.getContext('2d')!;
       mCtx.clearRect(0, 0, canvasW, canvasH);
 
@@ -311,7 +383,7 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture, initialGlassesStyle 
           for (const m of masks) { if (m[i] > 0) { combined[i] = 255; break; } }
         }
         
-        // Crear imagen de máscara recortada 9:16
+        // Crear imagen de máscara
         const tempMaskCanvas = document.createElement('canvas');
         tempMaskCanvas.width = vW; tempMaskCanvas.height = vH;
         const tempCtx = tempMaskCanvas.getContext('2d')!;
@@ -330,19 +402,14 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture, initialGlassesStyle 
           mCtx.save();
           mCtx.globalCompositeOperation = 'destination-in';
           mCtx.beginPath();
-          // Crear un camino que cubra toda la parte superior y se cierre en la mandíbula
-          // Empezamos arriba a la izquierda
           mCtx.moveTo(0, 0);
           mCtx.lineTo(canvasW, 0);
-          // Bajamos por el lateral derecho hasta el primer punto de la mandíbula (oreja derecha)
           const startPt = landmarks[JAWLINE_INDICES[JAWLINE_INDICES.length-1]];
           mCtx.lineTo(canvasW, startPt.y * canvasH);
-          // Seguimos la línea de la mandíbula de derecha a izquierda
           for (let i = JAWLINE_INDICES.length - 1; i >= 0; i--) {
             const pt = landmarks[JAWLINE_INDICES[i]];
             mCtx.lineTo(pt.x * canvasW, pt.y * canvasH);
           }
-          // Subimos desde la oreja izquierda hasta arriba a la izquierda
           mCtx.lineTo(0, landmarks[JAWLINE_INDICES[0]].y * canvasH);
           mCtx.lineTo(0, 0);
           mCtx.closePath();
@@ -353,66 +420,78 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture, initialGlassesStyle 
         // Suavizado de bordes (Feathering)
         mCtx.save();
         mCtx.globalCompositeOperation = 'destination-out';
-        mCtx.filter = 'blur(4px)'; // Un pequeño desenfoque para suavizar el borde del recorte
+        mCtx.filter = 'blur(4px)';
         mCtx.drawImage(maskCanvasRef.current, 0, 0);
         mCtx.restore();
 
-        // Limpiar canvas principal para transparencia real
-        ctx.clearRect(0, 0, canvasW, canvasH);
-        ctx.save();
-        ctx.drawImage(maskCanvasRef.current, 0, 0, canvasW, canvasH);
-        ctx.globalCompositeOperation = 'source-in';
-        ctx.drawImage(video, sx, sy, sW, sH, 0, 0, canvasW, canvasH);
-        ctx.restore();
+        // Renderizar video + gafas en canvas temporal
+        const tempVideoCanvas = document.createElement('canvas');
+        tempVideoCanvas.width = canvasW;
+        tempVideoCanvas.height = canvasH;
+        const tempVideoCtx = tempVideoCanvas.getContext('2d')!;
+        tempVideoCtx.clearRect(0, 0, canvasW, canvasH);
+        tempVideoCtx.drawImage(video, sx, sy, sW, sH, 0, 0, canvasW, canvasH);
+        if (landmarks && selectedStyle) {
+          drawGlasses(tempVideoCtx, landmarks, canvasW, canvasH, selectedStyle);
+        }
+
+        // Aplicar máscara al canvas de salida
+        outCtx.clearRect(0, 0, canvasW, canvasH);
+        outCtx.drawImage(maskCanvasRef.current, 0, 0, canvasW, canvasH);
+        outCtx.globalCompositeOperation = 'source-in';
+        outCtx.drawImage(tempVideoCanvas, 0, 0);
+        outCtx.globalCompositeOperation = 'source-over';
+      } else {
+        // Fallback sin máscaras
+        outCtx.clearRect(0, 0, canvasW, canvasH);
+        outCtx.drawImage(video, sx, sy, sW, sH, 0, 0, canvasW, canvasH);
+        if (landmarks && selectedStyle) {
+          drawGlasses(outCtx, landmarks, canvasW, canvasH, selectedStyle);
+        }
       }
     } else {
-      ctx.clearRect(0, 0, canvasW, canvasH);
-      ctx.drawImage(video, sx, sy, sW, sH, 0, 0, canvasW, canvasH);
+      // Sin segmentación: solo video + gafas
+      outCtx.clearRect(0, 0, canvasW, canvasH);
+      outCtx.drawImage(video, sx, sy, sW, sH, 0, 0, canvasW, canvasH);
+      if (landmarks && selectedStyle) {
+        drawGlasses(outCtx, landmarks, canvasW, canvasH, selectedStyle);
+      }
     }
 
-    if (landmarks && selectedStyle) {
-      drawGlasses(ctx, landmarks, canvasW, canvasH, selectedStyle);
-    }
-    
-    requestRef.current = requestAnimationFrame(process);
-  }, [loadingStage, error, selectedStyle, segmentationStatus]);
+    return outCanvas.toDataURL('image/png');
+  };
 
-  useEffect(() => {
-    initModels();
-    return () => {
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-      if (faceLandmarkerRef.current) faceLandmarkerRef.current.close();
-      if (segmenterRef.current) segmenterRef.current.close();
-      if (hairSegmenterRef.current) hairSegmenterRef.current.close();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (loadingStage === 'READY') requestRef.current = requestAnimationFrame(process);
-    return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
-  }, [loadingStage, process]);
-
-  // Timer para captura automática (mantener el sistema original)
+  // Timer para captura automática con segmentación
   useEffect(() => {
     if (loadingStage !== 'READY' || error) return;
     const timer = setInterval(() => {
       setTimeLeft(prev => {
         if (prev <= 1) { 
           clearInterval(timer); 
-          if (canvasRef.current && canvasRef.current.width > 0) {
+          // Capturar con segmentación aplicada
+          captureWithSegmentation().then((imageData) => {
             onCapture({ 
-              headImage: canvasRef.current.toDataURL('image/png'), 
+              headImage: imageData, 
               timestamp: new Date().toLocaleTimeString(), 
               appliedStyle: selectedStyle 
             });
-          }
+          }).catch((err) => {
+            // Fallback al canvas actual si falla
+            if (canvasRef.current && canvasRef.current.width > 0) {
+              onCapture({ 
+                headImage: canvasRef.current.toDataURL('image/png'), 
+                timestamp: new Date().toLocaleTimeString(), 
+                appliedStyle: selectedStyle 
+              });
+            }
+          });
           return 0; 
         }
         return prev - 1;
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [loadingStage, error, selectedStyle, onCapture]);
+  }, [loadingStage, error, selectedStyle, onCapture, segmentationStatus]);
 
   return (
     <div className="h-full flex flex-col bg-slate-950 overflow-hidden">

@@ -1,0 +1,7 @@
+{
+  "name": "Vision Lab - Real-time Bio-Detection",
+  "description": "A high-performance computer vision playground exploring MediaPipe Face Landmarking, Image Segmentation, and TensorFlow.js Body Segmentation for real-time video processing.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

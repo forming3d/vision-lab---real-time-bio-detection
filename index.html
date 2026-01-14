@@ -20,28 +20,16 @@
             height: 100vh;
             width: 100vw;
         }
-        
-        html, body {
-            height: 100%;
+        .kiosk-container {
             width: 100%;
-        }
-        #root {
             height: 100vh;
-            width: 100vw;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-.kiosk-container {
-            width: min(100vw, calc(100vh * 9 / 16));
-            height: min(100vh, calc(100vw * 16 / 9));
-            aspect-ratio: 9 / 16;
-            margin: 0;
+            max-width: 1080px;
+            margin: 0 auto;
             position: relative;
             background: #020617;
             border-left: 1px solid #1e293b;
             border-right: 1px solid #1e293b;
-            overflow: hidden;
+            aspect-ratio: 9/16;
         }
         .vignette {
             position: absolute;

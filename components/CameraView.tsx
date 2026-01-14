@@ -4,8 +4,17 @@ import * as vision from '@mediapipe/tasks-vision';
 import { CaptureData, GlassesStyle } from '../types';
 import { Timer, AlertCircle, EyeOff, Target, Sparkles, Cpu, Camera, Binary, Layers, Terminal, Gauge, Scissors, User } from 'lucide-react';
 
+// Importar imágenes de gafas usando import.meta.url para Vite
+const gafas1 = new URL('../assets/gafas/1Gafas.png', import.meta.url).href;
+const gafas2 = new URL('../assets/gafas/2Gafas.png', import.meta.url).href;
+const gafas3 = new URL('../assets/gafas/3Gafas.png', import.meta.url).href;
+const gafas4 = new URL('../assets/gafas/4Gafas.png', import.meta.url).href;
+const gafas5 = new URL('../assets/gafas/5Gafas.png', import.meta.url).href;
+const gafas6 = new URL('../assets/gafas/6Gafas.png', import.meta.url).href;
+
 interface CameraViewProps {
   onCapture: (data: CaptureData) => void;
+  initialGlassesStyle?: GlassesStyle;
 }
 
 type LoadingStage = 
@@ -30,27 +39,66 @@ const JAWLINE_INDICES = [
   234, 93, 132, 58, 172, 136, 150, 149, 176, 148, 152, 377, 400, 378, 379, 365, 397, 288, 361, 323, 454
 ];
 
-const CameraView: React.FC<CameraViewProps> = ({ onCapture }) => {
+const CameraView: React.FC<CameraViewProps> = ({ onCapture, initialGlassesStyle }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const processingCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
   const maskCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
-  const requestRef = useRef<number | null>(null);
-  const faceLandmarkerRef = useRef<vision.FaceLandmarker | null>(null);
-  const segmenterRef = useRef<vision.ImageSegmenter | null>(null);
-  const hairSegmenterRef = useRef<vision.ImageSegmenter | null>(null);
-  const lastLandmarksRef = useRef<vision.NormalizedLandmark[] | null>(null);
-
   
   const [loadingStage, setLoadingStage] = useState<LoadingStage>('INITIALIZING');
   const [logs, setLogs] = useState<SystemLog[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [selectedStyle] = useState<GlassesStyle>(initialGlassesStyle || GlassesStyle.CYBER);
+  const [segmentationStatus, setSegmentationStatus] = useState<'LOADING' | 'ACTIVE' | 'OFFLINE'>('LOADING');
   const [timeLeft, setTimeLeft] = useState(15);
-  const [selectedStyle, setSelectedStyle] = useState<GlassesStyle>(GlassesStyle.CYBER);
+  
+  const faceLandmarkerRef = useRef<vision.FaceLandmarker | null>(null);
+  const segmenterRef = useRef<vision.ImageSegmenter | null>(null);
+  const hairSegmenterRef = useRef<vision.ImageSegmenter | null>(null);
+  const requestRef = useRef<number | null>(null);
+  const glassesImagesRef = useRef<Map<GlassesStyle, HTMLImageElement>>(new Map());
 
   const addLog = (msg: string, type: 'info' | 'success' | 'warn' = 'info') => {
     setLogs(prev => [{ id: Math.random().toString(), msg, type }, ...prev].slice(0, 5));
   };
+
+  // Pre-cargar imágenes de gafas
+  useEffect(() => {
+    const loadGlassesImage = (src: string, style: GlassesStyle): Promise<HTMLImageElement> => {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = src;
+      });
+    };
+
+    const loadAllGlasses = async () => {
+      try {
+        const images = await Promise.all([
+          loadGlassesImage(gafas1, GlassesStyle.CYBER),
+          loadGlassesImage(gafas2, GlassesStyle.CLASSIC),
+          loadGlassesImage(gafas3, GlassesStyle.AVIATOR),
+          loadGlassesImage(gafas4, GlassesStyle.RETRO),
+          loadGlassesImage(gafas5, GlassesStyle.MONOCLE),
+          loadGlassesImage(gafas6, GlassesStyle.CYBER), // Fallback o estilo adicional
+        ]);
+
+        glassesImagesRef.current.set(GlassesStyle.CYBER, images[0]);
+        glassesImagesRef.current.set(GlassesStyle.CLASSIC, images[1]);
+        glassesImagesRef.current.set(GlassesStyle.AVIATOR, images[2]);
+        glassesImagesRef.current.set(GlassesStyle.RETRO, images[3]);
+        glassesImagesRef.current.set(GlassesStyle.MONOCLE, images[4]);
+        // Si hay un 6to estilo, puedes agregarlo aquí
+        
+        addLog('Gafas PNG cargadas', 'success');
+      } catch (error) {
+        addLog('Error cargando imágenes de gafas', 'warn');
+      }
+    };
+
+    loadAllGlasses();
+  }, []);
 
   const getProgress = () => {
     const stages: LoadingStage[] = ['INITIALIZING', 'RESOLVING_WASM', 'LOADING_FACEMESH', 'LOADING_SEGMENTER', 'LOADING_HAIR_SEGMENTER', 'REQUESTING_CAMERA', 'HARDWARE_SYNC', 'CALIBRATING', 'READY'];
@@ -79,7 +127,7 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture }) => {
       try {
         segmenterRef.current = await vision.ImageSegmenter.createFromOptions(resolver, {
           baseOptions: { 
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.task',
             delegate: 'GPU'
           },
           runningMode: 'VIDEO',
@@ -91,7 +139,7 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture }) => {
       try {
         hairSegmenterRef.current = await vision.ImageSegmenter.createFromOptions(resolver, {
           baseOptions: { 
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/hair_segmenter/float32/latest/hair_segmenter.tflite',
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hair_segmenter/hair_segmenter/float32/latest/hair_segmenter.task',
             delegate: 'GPU'
           },
           runningMode: 'VIDEO',
@@ -110,92 +158,80 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture }) => {
   };
 
   const startVideo = async () => {
-    // Nota: en algunos navegadores, tener el <video> con display:none puede romper el flujo.
-    // Por eso lo dejamos en el DOM pero invisible (ver JSX).
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setError("Este navegador no soporta acceso a cámara (getUserMedia).");
-      throw new Error("getUserMedia not supported");
-    }
-
     try {
-      // Stop stream previo si existía
-      const prev = (videoRef.current?.srcObject as MediaStream | null);
-      if (prev) prev.getTracks().forEach(t => t.stop());
-
-      const preferred: MediaStreamConstraints = {
-        audio: false,
-        video: {
-          facingMode: 'user',
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      };
-
-      let stream: MediaStream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(preferred);
-      } catch (e1) {
-        // Fallback: algunas webcams/PCs no soportan facingMode/ideal dims
-        addLog('Cámara: fallback de constraints (video:true)', 'warn');
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      }
-
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 } } 
+      });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-
-        await new Promise<void>((resolve) => {
-          const v = videoRef.current!;
-          if (v.readyState >= 2) return resolve();
-          v.onloadedmetadata = () => resolve();
-        });
-
+        await new Promise((resolve) => { if (videoRef.current) videoRef.current.onloadedmetadata = resolve; });
         await videoRef.current.play();
       }
-    } catch (e: any) {
-      const name = e?.name || 'Error';
-      const msg = e?.message || String(e);
-      addLog(`Cámara: ${name} - ${msg}`, 'warn');
-
-      // Mensajes útiles (sin humo)
-      if (name === 'NotAllowedError' || name === 'SecurityError') {
-        setError("Permiso de cámara bloqueado. Permite cámara en Chrome para localhost.");
-      } else if (name === 'NotFoundError') {
-        setError("No se encontró ninguna cámara conectada.");
-      } else if (name === 'NotReadableError') {
-        setError("La cámara está siendo usada por otra app (Zoom/OBS/etc.).");
-      } else {
-        setError("No se pudo iniciar la cámara.");
-      }
+    } catch (e) { 
+      setError("Acceso denegado a la cámara.");
       throw e;
     }
-  };;
+  };
 
   const drawGlasses = (ctx: CanvasRenderingContext2D, landmarks: vision.NormalizedLandmark[], w: number, h: number, style: GlassesStyle) => {
     if (style === GlassesStyle.NONE) return;
-    const leftEye = landmarks[263]; const rightEye = landmarks[33]; const bridge = landmarks[168]; 
+    
+    const glassesImg = glassesImagesRef.current.get(style);
+    if (!glassesImg || !glassesImg.complete) return; // Esperar a que la imagen esté cargada
+    
+    const leftEye = landmarks[263]; 
+    const rightEye = landmarks[33]; 
+    const bridge = landmarks[168]; 
     if (!leftEye || !rightEye || !bridge) return;
     
-    const lx = leftEye.x * w; const ly = leftEye.y * h;
-    const rx = rightEye.x * w; const ry = rightEye.y * h;
-    const bx = bridge.x * w; const by = bridge.y * h;
+    const lx = leftEye.x * w; 
+    const ly = leftEye.y * h;
+    const rx = rightEye.x * w; 
+    const ry = rightEye.y * h;
+    const bx = bridge.x * w; 
+    const by = bridge.y * h;
+    
+    // Calcular distancia entre ojos y ángulo
     const dist = Math.sqrt(Math.pow(rx - lx, 2) + Math.pow(ry - ly, 2));
     const angle = Math.atan2(ry - ly, rx - lx);
-
-    ctx.save(); ctx.translate(bx, by); ctx.rotate(angle);
-    if (style === GlassesStyle.CYBER) {
-      ctx.shadowBlur = 15; ctx.shadowColor = '#6366f1';
-      ctx.fillStyle = 'rgba(99, 102, 241, 0.3)'; ctx.strokeStyle = '#818cf8'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.roundRect(-dist * 1.1, -dist * 0.25, dist * 2.2, dist * 0.5, 4);
-      ctx.fill(); ctx.stroke();
-    } else if (style === GlassesStyle.RETRO) {
-      ctx.strokeStyle = '#e11d48'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(-dist * 0.6, 0, dist * 0.45, 0, Math.PI*2); ctx.stroke();
-      ctx.beginPath(); ctx.arc(dist * 0.6, 0, dist * 0.45, 0, Math.PI*2); ctx.stroke();
-    } else if (style === GlassesStyle.AVIATOR) {
-      ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.ellipse(-dist * 0.6, 0, dist * 0.6, dist * 0.5, 0, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(dist * 0.6, 0, dist * 0.6, dist * 0.5, 0, 0, Math.PI * 2); ctx.stroke();
-    }
+    
+    // Calcular dimensiones de las gafas basadas en la distancia entre ojos
+    // Ajustar el ancho de las gafas según la distancia entre ojos (con un factor de escala)
+    const glassesWidth = dist * 2.2; // Ancho de las gafas (un poco más ancho que la distancia entre ojos)
+    const glassesHeight = glassesWidth * (glassesImg.height / glassesImg.width); // Mantener proporción de la imagen
+    
+    // Calcular el punto medio vertical entre los ojos para mejor alineación
+    const eyeCenterY = (ly + ry) / 2;
+    // Calcular el offset vertical en el espacio rotado (perpendicular a la línea entre ojos)
+    const verticalOffset = eyeCenterY - by;
+    
+    // Guardar el contexto
+    ctx.save();
+    
+    // Mover al punto del puente y rotar
+    ctx.translate(bx, by);
+    ctx.rotate(angle);
+    
+    // Invertir verticalmente (arriba/abajo) para corregir la orientación
+    ctx.scale(1, -1);
+    
+    // Calcular el offset en el espacio rotado
+    // Necesitamos rotar el vector (0, verticalOffset) por el ángulo
+    const rotatedOffsetX = -Math.sin(angle) * verticalOffset;
+    const rotatedOffsetY = Math.cos(angle) * verticalOffset;
+    
+    // Dibujar la imagen de las gafas centrada en el puente con ajuste vertical
+    // El anchor point está en el centro de la imagen
+    // Nota: como aplicamos scale(1, -1), necesitamos invertir también la posición Y
+    ctx.drawImage(
+      glassesImg,
+      -glassesWidth / 2 + rotatedOffsetX,  // x: centrar horizontalmente
+      -glassesHeight / 2 - rotatedOffsetY, // y: centrar verticalmente (invertido por el scale)
+      glassesWidth,
+      glassesHeight
+    );
+    
+    // Restaurar el contexto
     ctx.restore();
   };
 
@@ -236,9 +272,9 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture }) => {
       sy = (vH - sH) / 2;
     }
 
-    // El canvas siempre será 720x1280 (o similar 9:16)
-    const canvasW = 720;
-    const canvasH = 1280;
+    // El canvas siempre será 1080x1920 (9:16 responsive)
+    const canvasW = 1080;
+    const canvasH = 1920;
     if (canvas.width !== canvasW) {
       canvas.width = canvasW; canvas.height = canvasH;
       maskCanvasRef.current.width = canvasW; maskCanvasRef.current.height = canvasH;
@@ -254,19 +290,92 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture }) => {
       y: (l.y * vH - sy) / sH
     }));
 
-    
-    // Guardar landmarks para captura (screen 3)
-    if (landmarks) lastLandmarksRef.current = landmarks;
-    // LIVE VIEW (Pantalla 2): SOLO AR (sin segmentación)
-    ctx.clearRect(0, 0, canvasW, canvasH);
-    ctx.drawImage(video, sx, sy, sW, sH, 0, 0, canvasW, canvasH);
+    if (segmentationStatus === 'ACTIVE') {
+      const mCtx = maskCanvasRef.current.getContext('2d')!;
+      mCtx.clearRect(0, 0, canvasW, canvasH);
 
-    if (landmarks) {
+      const masks: Uint8Array[] = [];
+      if (segmenterRef.current) {
+        const res = segmenterRef.current.segmentForVideo(video, ts);
+        if (res.categoryMask) masks.push(res.categoryMask.getAsUint8Array());
+      }
+      if (hairSegmenterRef.current) {
+        const res = hairSegmenterRef.current.segmentForVideo(video, ts);
+        if (res.categoryMask) masks.push(res.categoryMask.getAsUint8Array());
+      }
+
+      if (masks.length > 0) {
+        // Combinar máscaras
+        const combined = new Uint8Array(masks[0].length);
+        for (let i = 0; i < combined.length; i++) {
+          for (const m of masks) { if (m[i] > 0) { combined[i] = 255; break; } }
+        }
+        
+        // Crear imagen de máscara recortada 9:16
+        const tempMaskCanvas = document.createElement('canvas');
+        tempMaskCanvas.width = vW; tempMaskCanvas.height = vH;
+        const tempCtx = tempMaskCanvas.getContext('2d')!;
+        const tempImgData = tempCtx.createImageData(vW, vH);
+        for (let i = 0; i < combined.length; i++) {
+          const v = combined[i] > 0 ? 255 : 0;
+          tempImgData.data[i*4] = v; tempImgData.data[i*4+1] = v; tempImgData.data[i*4+2] = v; tempImgData.data[i*4+3] = v;
+        }
+        tempCtx.putImageData(tempImgData, 0, 0);
+
+        // Dibujar la máscara en maskCanvasRef respetando el recorte 9:16
+        mCtx.drawImage(tempMaskCanvas, sx, sy, sW, sH, 0, 0, canvasW, canvasH);
+
+        // APLICAR RECORTE DE CUELLO (Jawline)
+        if (landmarks) {
+          mCtx.save();
+          mCtx.globalCompositeOperation = 'destination-in';
+          mCtx.beginPath();
+          // Crear un camino que cubra toda la parte superior y se cierre en la mandíbula
+          // Empezamos arriba a la izquierda
+          mCtx.moveTo(0, 0);
+          mCtx.lineTo(canvasW, 0);
+          // Bajamos por el lateral derecho hasta el primer punto de la mandíbula (oreja derecha)
+          const startPt = landmarks[JAWLINE_INDICES[JAWLINE_INDICES.length-1]];
+          mCtx.lineTo(canvasW, startPt.y * canvasH);
+          // Seguimos la línea de la mandíbula de derecha a izquierda
+          for (let i = JAWLINE_INDICES.length - 1; i >= 0; i--) {
+            const pt = landmarks[JAWLINE_INDICES[i]];
+            mCtx.lineTo(pt.x * canvasW, pt.y * canvasH);
+          }
+          // Subimos desde la oreja izquierda hasta arriba a la izquierda
+          mCtx.lineTo(0, landmarks[JAWLINE_INDICES[0]].y * canvasH);
+          mCtx.lineTo(0, 0);
+          mCtx.closePath();
+          mCtx.fill();
+          mCtx.restore();
+        }
+
+        // Suavizado de bordes (Feathering)
+        mCtx.save();
+        mCtx.globalCompositeOperation = 'destination-out';
+        mCtx.filter = 'blur(4px)'; // Un pequeño desenfoque para suavizar el borde del recorte
+        mCtx.drawImage(maskCanvasRef.current, 0, 0);
+        mCtx.restore();
+
+        // Limpiar canvas principal para transparencia real
+        ctx.clearRect(0, 0, canvasW, canvasH);
+        ctx.save();
+        ctx.drawImage(maskCanvasRef.current, 0, 0, canvasW, canvasH);
+        ctx.globalCompositeOperation = 'source-in';
+        ctx.drawImage(video, sx, sy, sW, sH, 0, 0, canvasW, canvasH);
+        ctx.restore();
+      }
+    } else {
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.drawImage(video, sx, sy, sW, sH, 0, 0, canvasW, canvasH);
+    }
+
+    if (landmarks && selectedStyle) {
       drawGlasses(ctx, landmarks, canvasW, canvasH, selectedStyle);
     }
     
     requestRef.current = requestAnimationFrame(process);
-  }, [loadingStage, error, selectedStyle]);
+  }, [loadingStage, error, selectedStyle, segmentationStatus]);
 
   useEffect(() => {
     initModels();
@@ -283,152 +392,7 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture }) => {
     return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
   }, [loadingStage, process]);
 
-
-  // ============================================================
-  // CAPTURE (Pantalla 3): Segmentación SOLO en la captura
-  // - Incluye pelo/orejas/cara
-  // - Excluye cuello mediante recorte por mandíbula (jawline)
-  // ============================================================
-  const captureHeadPng = async (): Promise<string | null> => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas || video.videoWidth === 0) return null;
-
-    // Si los modelos no están listos, devolvemos el canvas actual (AR sin segmentación)
-    if (!segmenterRef.current || !hairSegmenterRef.current) {
-      // Fallback: si no hay segmentadores, devolvemos captura con AR sin recorte por máscara
-      const fallback = processingCanvasRef.current;
-      fallback.width = canvas.width;
-      fallback.height = canvas.height;
-      const fctx = fallback.getContext('2d');
-      if (!fctx) return canvas.toDataURL('image/png');
-      // Pintamos el frame ya croppeado 9:16 y las gafas (si hay landmarks)
-      // Nota: el crop 9:16 se calcula justo debajo; aquí devolvemos AR simple usando el canvas actual.
-      fctx.clearRect(0, 0, fallback.width, fallback.height);
-      fctx.drawImage(canvas, 0, 0);
-      return fallback.toDataURL('image/png');
-    }
-    // Misma lógica de crop 9:16 (cover) que el live view
-    const targetRatio = 9 / 16;
-    const vW = video.videoWidth;
-    const vH = video.videoHeight;
-    const videoRatio = vW / vH;
-
-    let sx: number, sy: number, sW: number, sH: number;
-    if (videoRatio > targetRatio) {
-      sW = vH * targetRatio;
-      sH = vH;
-      sx = (vW - sW) / 2;
-      sy = 0;
-    } else {
-      sW = vW;
-      sH = vW / targetRatio;
-      sx = 0;
-      sy = (vH - sH) / 2;
-    }
-
-    const outW = canvas.width;
-    const outH = canvas.height;
-
-    const ts = performance.now();
-
-    // Landmarks guardados (en coordenadas normalizadas del crop 9:16)
-    const landmarks = lastLandmarksRef.current;
-
-    // 1) Segmentación: persona + pelo
-    const masks: Uint8Array[] = [];
-    const res1 = segmenterRef.current.segmentForVideo(video, ts);
-    if (res1.categoryMask) masks.push(res1.categoryMask.getAsUint8Array());
-    const res2 = hairSegmenterRef.current.segmentForVideo(video, ts);
-    if (res2.categoryMask) masks.push(res2.categoryMask.getAsUint8Array());
-
-    if (masks.length === 0) {
-      return canvas.toDataURL('image/png');
-    }
-
-    // Combinar masks (OR)
-    const combined = new Uint8Array(masks[0].length);
-    for (let i = 0; i < combined.length; i++) {
-      for (const m of masks) {
-        if (m[i] > 0) { combined[i] = 255; break; }
-      }
-    }
-
-    // 2) Pasar mask a un canvas del tamaño del video y luego recortar a 9:16
-    const tempMaskCanvas = document.createElement('canvas');
-    tempMaskCanvas.width = vW;
-    tempMaskCanvas.height = vH;
-    const tempCtx = tempMaskCanvas.getContext('2d')!;
-    const tempImgData = tempCtx.createImageData(vW, vH);
-    for (let i = 0; i < combined.length; i++) {
-      const v = combined[i] > 0 ? 255 : 0;
-      tempImgData.data[i * 4] = v;
-      tempImgData.data[i * 4 + 1] = v;
-      tempImgData.data[i * 4 + 2] = v;
-      tempImgData.data[i * 4 + 3] = v;
-    }
-    tempCtx.putImageData(tempImgData, 0, 0);
-
-    // maskCanvasRef ya existe como offscreen
-    const mCanvas = maskCanvasRef.current;
-    mCanvas.width = outW;
-    mCanvas.height = outH;
-    const mCtx = mCanvas.getContext('2d')!;
-    mCtx.clearRect(0, 0, outW, outH);
-    mCtx.drawImage(tempMaskCanvas, sx, sy, sW, sH, 0, 0, outW, outH);
-
-    // 3) Recorte por mandíbula (excluir cuello)
-    if (landmarks) {
-      mCtx.save();
-      mCtx.globalCompositeOperation = 'destination-in';
-      mCtx.beginPath();
-      mCtx.moveTo(0, 0);
-      mCtx.lineTo(outW, 0);
-
-      const startPt = landmarks[JAWLINE_INDICES[JAWLINE_INDICES.length - 1]];
-      mCtx.lineTo(outW, startPt.y * outH);
-
-      for (let i = JAWLINE_INDICES.length - 1; i >= 0; i--) {
-        const pt = landmarks[JAWLINE_INDICES[i]];
-        mCtx.lineTo(pt.x * outW, pt.y * outH);
-      }
-
-      mCtx.lineTo(0, landmarks[JAWLINE_INDICES[0]].y * outH);
-      mCtx.lineTo(0, 0);
-      mCtx.closePath();
-      mCtx.fill();
-      mCtx.restore();
-    }
-
-    // 4) Feather suave para bordes naturales
-    mCtx.save();
-    mCtx.globalCompositeOperation = 'destination-out';
-    mCtx.filter = 'blur(4px)';
-    mCtx.drawImage(mCanvas, 0, 0);
-    mCtx.restore();
-
-    // 5) Render AR en un canvas intermedio (video + gafas) y aplicar máscara
-    const procCanvas = processingCanvasRef.current;
-    procCanvas.width = outW;
-    procCanvas.height = outH;
-    const pCtx = procCanvas.getContext('2d')!;
-    pCtx.clearRect(0, 0, outW, outH);
-    pCtx.drawImage(video, sx, sy, sW, sH, 0, 0, outW, outH);
-    if (landmarks) drawGlasses(pCtx, landmarks, outW, outH, selectedStyle);
-
-    const outCanvas = document.createElement('canvas');
-    outCanvas.width = outW;
-    outCanvas.height = outH;
-    const oCtx = outCanvas.getContext('2d')!;
-    oCtx.clearRect(0, 0, outW, outH);
-    oCtx.drawImage(mCanvas, 0, 0);
-    oCtx.globalCompositeOperation = 'source-in';
-    oCtx.drawImage(procCanvas, 0, 0);
-    oCtx.globalCompositeOperation = 'source-over';
-
-    return outCanvas.toDataURL('image/png');
-  };
-
+  // Timer para captura automática (mantener el sistema original)
   useEffect(() => {
     if (loadingStage !== 'READY' || error) return;
     const timer = setInterval(() => {
@@ -436,13 +400,10 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture }) => {
         if (prev <= 1) { 
           clearInterval(timer); 
           if (canvasRef.current && canvasRef.current.width > 0) {
-            captureHeadPng().then((png) => {
-              if (!png) return;
-              onCapture({
-                headImage: png,
-                timestamp: new Date().toLocaleTimeString(),
-                appliedStyle: selectedStyle
-              });
+            onCapture({ 
+              headImage: canvasRef.current.toDataURL('image/png'), 
+              timestamp: new Date().toLocaleTimeString(), 
+              appliedStyle: selectedStyle 
             });
           }
           return 0; 
@@ -455,61 +416,61 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture }) => {
 
   return (
     <div className="h-full flex flex-col bg-slate-950 overflow-hidden">
-      <div className="p-6 flex items-center justify-between border-b border-white/5 bg-slate-900/60 backdrop-blur-xl z-30">
-        <div className="flex items-center gap-4">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-600/20">
-            <Cpu className="w-6 h-6 text-white" />
+      <div className="p-4 md:p-6 flex items-center justify-between border-b border-white/5 bg-slate-900/60 backdrop-blur-xl z-30 shrink-0">
+        <div className="flex items-center gap-3 md:gap-4">
+          <div className="w-8 h-8 md:w-10 md:h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-600/20">
+            <Cpu className="w-4 h-4 md:w-6 md:h-6 text-white" />
           </div>
           <div>
-            <h2 className="text-sm font-black text-white uppercase tracking-widest">BioKiosk Pro v5.5</h2>
+            <h2 className="text-xs md:text-sm font-black text-white uppercase tracking-widest">BioKiosk Pro v5.5</h2>
             <div className="flex items-center gap-2">
-              <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                {'AR Live Preview'}
+              <span className={`flex h-1.5 w-1.5 md:h-2 md:w-2 rounded-full ${segmentationStatus === 'ACTIVE' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+              <p className="text-[9px] md:text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                {segmentationStatus === 'ACTIVE' ? 'IA Head Isolation' : 'Standard View'}
               </p>
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-3 bg-slate-950 px-4 py-2 rounded-2xl border border-white/10 shadow-inner">
-          <Timer className="w-4 h-4 text-indigo-400" />
-          <span className="text-xl font-black text-white tabular-nums">{timeLeft}s</span>
+        <div className="flex items-center gap-2 md:gap-3 bg-slate-950 px-3 md:px-4 py-1.5 md:py-2 rounded-xl md:rounded-2xl border border-white/10 shadow-inner">
+          <Timer className="w-3 h-3 md:w-4 md:h-4 text-indigo-400" />
+          <span className="text-lg md:text-xl font-black text-white tabular-nums">{timeLeft}s</span>
         </div>
       </div>
 
-      <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden p-4">
-        <video ref={videoRef} className="absolute -z-10 w-px h-px opacity-0 pointer-events-none" playsInline muted autoPlay />
-        <div className="relative h-full aspect-[9/16] overflow-hidden rounded-[2.5rem] border border-white/10 shadow-[0_0_100px_rgba(99,102,241,0.2)]">
+      <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden p-2 md:p-4 min-h-0">
+        <video ref={videoRef} className="hidden" playsInline muted autoPlay />
+        <div className="relative h-full w-full max-w-full aspect-[9/16] overflow-hidden rounded-2xl md:rounded-[2.5rem] border border-white/10 shadow-[0_0_100px_rgba(99,102,241,0.2)]">
           <canvas ref={canvasRef} className="w-full h-full mirror object-cover bg-slate-900" />
           
           <div className="absolute inset-0 z-10 pointer-events-none">
              <div className="scanner opacity-20" />
              {/* Guía Biométrica */}
              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4/5 aspect-[3/4] border-[2px] border-dashed border-indigo-500/20 rounded-full flex flex-col items-center justify-center">
-                <div className="absolute -top-10 text-[9px] font-black text-indigo-400 uppercase tracking-widest bg-slate-950 px-3 py-1 rounded-full border border-indigo-500/20">
+                <div className="absolute -top-8 md:-top-10 text-[8px] md:text-[9px] font-black text-indigo-400 uppercase tracking-widest bg-slate-950 px-2 md:px-3 py-0.5 md:py-1 rounded-full border border-indigo-500/20">
                     Alineación Biométrica
                 </div>
-                <User className="w-12 h-12 text-white/5" />
+                <User className="w-8 h-8 md:w-12 md:h-12 text-white/5" />
              </div>
           </div>
         </div>
 
         {loadingStage !== 'READY' && !error && (
-          <div className="absolute inset-0 z-40 bg-slate-950/98 flex flex-col items-center justify-center p-8 backdrop-blur-md">
-            <div className="max-w-md w-full">
-              <div className="mb-10 flex items-center justify-between">
+          <div className="absolute inset-0 z-40 bg-slate-950/98 flex flex-col items-center justify-center p-4 md:p-8 backdrop-blur-md">
+            <div className="w-full max-w-md">
+              <div className="mb-6 md:mb-10 flex items-center justify-between">
                 <div>
-                  <h3 className="text-2xl font-black text-white uppercase tracking-tighter italic">SISTEMA <span className="text-indigo-500">BIO-OS</span></h3>
-                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em]">Neural Engine: Portrait Isolation</span>
+                  <h3 className="text-xl md:text-2xl font-black text-white uppercase tracking-tighter italic">SISTEMA <span className="text-indigo-500">BIO-OS</span></h3>
+                  <span className="text-[9px] md:text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em]">Neural Engine: Portrait Isolation</span>
                 </div>
                 <div className="text-right">
-                  <span className="text-3xl font-black text-white tabular-nums tracking-tighter">{Math.round(getProgress())}%</span>
+                  <span className="text-2xl md:text-3xl font-black text-white tabular-nums tracking-tighter">{Math.round(getProgress())}%</span>
                 </div>
               </div>
-              <div className="relative h-1 w-full bg-slate-900 rounded-full overflow-hidden mb-8">
+              <div className="relative h-1 w-full bg-slate-900 rounded-full overflow-hidden mb-6 md:mb-8">
                 <div className="h-full bg-indigo-500 transition-all duration-500 shadow-[0_0_10px_#6366f1]" style={{ width: `${getProgress()}%` }} />
               </div>
-              <div className="bg-black/40 rounded-2xl border border-white/5 p-4 font-mono">
-                <div className="space-y-1 h-24 overflow-hidden text-[9px]">
+              <div className="bg-black/40 rounded-xl md:rounded-2xl border border-white/5 p-3 md:p-4 font-mono">
+                <div className="space-y-1 h-20 md:h-24 overflow-hidden text-[8px] md:text-[9px]">
                   {logs.map((log) => (
                     <div key={log.id} className="flex gap-2 text-slate-400">
                       <span>[{new Date().toLocaleTimeString()}]</span>
@@ -524,24 +485,6 @@ const CameraView: React.FC<CameraViewProps> = ({ onCapture }) => {
         )}
       </div>
 
-      <div className="p-8 bg-slate-900/90 backdrop-blur-2xl border-t border-white/5 z-30">
-        <div className="flex gap-4 overflow-x-auto pb-4 no-scrollbar">
-          {(Object.values(GlassesStyle) as GlassesStyle[]).map((style) => (
-            <button
-              key={style}
-              onClick={() => setSelectedStyle(style)}
-              className={`px-8 py-5 rounded-[1.5rem] flex-shrink-0 transition-all border font-black text-[10px] uppercase tracking-widest flex items-center gap-3 ${
-                selectedStyle === style 
-                  ? 'bg-indigo-600 border-indigo-400 text-white shadow-xl shadow-indigo-600/40' 
-                  : 'bg-slate-800/40 border-white/5 text-slate-500 hover:border-white/10'
-              }`}
-            >
-              {style === GlassesStyle.NONE ? <EyeOff className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
-              {style}
-            </button>
-          ))}
-        </div>
-      </div>
     </div>
   );
 };

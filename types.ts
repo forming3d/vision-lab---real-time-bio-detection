@@ -1,6 +1,7 @@
 
 export enum KioskStep {
   HOME = 'HOME',
+  GLASSES_SELECTION = 'GLASSES_SELECTION',
   SCANNING = 'SCANNING',
   RESULT = 'RESULT'
 }

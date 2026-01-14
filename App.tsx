@@ -1,15 +1,22 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { KioskStep, CaptureData } from './types';
+import { KioskStep, CaptureData, GlassesStyle } from './types';
 import HomeView from './components/HomeView';
+import GlassesSelectionView from './components/GlassesSelectionView';
 import CameraView from './components/CameraView';
 import ResultView from './components/ResultView';
 
 const App: React.FC = () => {
   const [step, setStep] = useState<KioskStep>(KioskStep.HOME);
   const [capture, setCapture] = useState<CaptureData | null>(null);
+  const [selectedGlasses, setSelectedGlasses] = useState<GlassesStyle | null>(null);
 
-  const handleStart = () => setStep(KioskStep.SCANNING);
+  const handleStart = () => setStep(KioskStep.GLASSES_SELECTION);
+  
+  const handleGlassesSelect = (style: GlassesStyle) => {
+    setSelectedGlasses(style);
+    setStep(KioskStep.SCANNING);
+  };
   
   const handleCapture = (data: CaptureData) => {
     setCapture(data);
@@ -18,6 +25,7 @@ const App: React.FC = () => {
 
   const handleReset = useCallback(() => {
     setCapture(null);
+    setSelectedGlasses(null);
     setStep(KioskStep.HOME);
   }, []);
 
@@ -54,8 +62,12 @@ const App: React.FC = () => {
     <div className="kiosk-container overflow-hidden shadow-2xl">
       {step === KioskStep.HOME && <HomeView onStart={handleStart} />}
       
-      {step === KioskStep.SCANNING && (
-        <CameraView onCapture={handleCapture} />
+      {step === KioskStep.GLASSES_SELECTION && (
+        <GlassesSelectionView onSelect={handleGlassesSelect} />
+      )}
+      
+      {step === KioskStep.SCANNING && selectedGlasses && (
+        <CameraView onCapture={handleCapture} initialGlassesStyle={selectedGlasses} />
       )}
       
       {step === KioskStep.RESULT && capture && (
